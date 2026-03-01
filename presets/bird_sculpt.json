@@ -1,0 +1,21 @@
+{
+  "subject": "bird",
+  "max_steps": 12,
+  "beam_width": 2,
+  "candidates_per_step": 3,
+  "render_views": ["iso"],
+  "turntable_frames": 0,
+  "resolution": { "w": 768, "h": 768 },
+  "score_threshold": 0.84,
+  "plateau_patience": 3,
+  "weights": {
+    "concept_similarity": 0.55,
+    "silhouette_similarity": 0.25,
+    "complexity_penalty": 0.10,
+    "progress_reward": 0.10
+  },
+  "llm": {
+    "temperature": 0.3,
+    "max_tokens": 1200
+  }
+}

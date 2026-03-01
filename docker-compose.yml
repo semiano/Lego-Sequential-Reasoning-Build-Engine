@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: leocad-toolkit-backend
+    environment:
+      - LEOCAD_EXE=${LEOCAD_EXE:-leocad}
+      - LDRAW_PARTS_DIR=${LDRAW_PARTS_DIR:-}
+      - DATA_DIR=/app/data
+      - DATABASE_URL=sqlite:////app/data/app.db
+      - CORS_ORIGINS=http://localhost:3000
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: leocad-toolkit-frontend
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

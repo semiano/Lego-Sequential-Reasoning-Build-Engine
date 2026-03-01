@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MicroAssembly",
+  "type": "object",
+  "required": ["assemblies"],
+  "properties": {
+    "assemblies": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["color", "position", "matrix", "part_id", "intent_note"],
+        "properties": {
+          "color": { "type": "integer", "minimum": 0, "maximum": 511 },
+          "position": {
+            "type": "object",
+            "required": ["x", "y", "z"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "z": { "type": "number" }
+            },
+            "additionalProperties": false
+          },
+          "matrix": {
+            "type": "array",
+            "minItems": 9,
+            "maxItems": 9,
+            "items": { "type": "number" }
+          },
+          "part_id": { "type": "string", "pattern": "^[^\\/]+\\.dat$" },
+          "intent_note": { "type": "string", "minLength": 3 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
