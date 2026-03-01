@@ -4,6 +4,7 @@ export type Workspace = {
   created_at: string;
   updated_at: string;
   current_step: number;
+  desired_image_rel_path?: string | null;
 };
 
 export type Artifact = {

@@ -26,6 +26,7 @@ export default function WorkspacePage() {
   const [aiLogPath, setAiLogPath] = useState<string | null>(null);
   const [aiLogLines, setAiLogLines] = useState<string[]>([]);
   const [aiRunning, setAiRunning] = useState(false);
+  const [aiStopping, setAiStopping] = useState(false);
   const [conceptImage, setConceptImage] = useState<File | null>(null);
   const [conceptPreviewUrl, setConceptPreviewUrl] = useState<string | null>(null);
   const [aiMonitoring, setAiMonitoring] = useState(false);
@@ -37,6 +38,16 @@ export default function WorkspacePage() {
   const [beamWidth, setBeamWidth] = useState(2);
   const [candidatesPerStep, setCandidatesPerStep] = useState(3);
   const [scoreThreshold, setScoreThreshold] = useState(0.84);
+
+  const persistedConceptUrl = useMemo(() => {
+    const relPath = timeline?.workspace.desired_image_rel_path;
+    if (!relPath) {
+      return null;
+    }
+    return api.artifactUrl(id, relPath);
+  }, [timeline, id]);
+
+  const effectiveConceptPreviewUrl = conceptPreviewUrl ?? persistedConceptUrl;
 
   const refresh = async (showLoading = true) => {
     if (showLoading) {
@@ -191,7 +202,7 @@ export default function WorkspacePage() {
 
   const onStartAiRun = async (event: FormEvent) => {
     event.preventDefault();
-    if (!conceptImage) {
+    if (!conceptImage && !persistedConceptUrl) {
       setError("Please upload a desired build image first.");
       return;
     }
@@ -225,6 +236,25 @@ export default function WorkspacePage() {
     }
   };
 
+  const onStopAiRun = async () => {
+    setAiStopping(true);
+    setError(null);
+    try {
+      const stopped = await api.stopAiRun(id);
+      setAiResult(stopped.message);
+      setAiRunning(false);
+      setAiMonitoring(false);
+      const status = await api.aiStatus(id, 350);
+      setAiPid(status.pid);
+      setAiLogPath(status.log_path);
+      setAiLogLines(status.log_lines);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAiStopping(false);
+    }
+  };
+
   return (
     <main style={{ padding: 18, display: "grid", gap: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -247,8 +277,8 @@ export default function WorkspacePage() {
         <form onSubmit={onStartAiRun} style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "start" }}>
             <div style={{ display: "grid", gap: 8 }}>
-              <label style={{ fontSize: 13, fontWeight: 600 }}>Desired build image (required)</label>
-              <input type="file" accept="image/*" onChange={(event) => setConceptImage(event.target.files?.[0] ?? null)} required />
+              <label style={{ fontSize: 13, fontWeight: 600 }}>Desired build image {persistedConceptUrl ? "(saved, optional to replace)" : "(required)"}</label>
+              <input type="file" accept="image/*" onChange={(event) => setConceptImage(event.target.files?.[0] ?? null)} />
 
               <label style={{ fontSize: 13, fontWeight: 600 }}>Run name</label>
               <input value={runName} onChange={(event) => setRunName(event.target.value)} placeholder="e.g. hummingbird-v1" />
@@ -259,8 +289,8 @@ export default function WorkspacePage() {
 
             <div style={{ border: "1px solid #2e3540", borderRadius: 8, background: "#0f1318", padding: 8 }}>
               <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>Desired build thumbnail</div>
-              {conceptPreviewUrl ? (
-                <img src={conceptPreviewUrl} alt="Desired build preview" style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6 }} />
+              {effectiveConceptPreviewUrl ? (
+                <img src={effectiveConceptPreviewUrl} alt="Desired build preview" style={{ width: "100%", height: 180, objectFit: "cover", borderRadius: 6 }} />
               ) : (
                 <div style={{ height: 180, display: "grid", placeItems: "center", border: "1px dashed #334155", borderRadius: 6, fontSize: 12, opacity: 0.8 }}>
                   No image selected
@@ -331,6 +361,11 @@ export default function WorkspacePage() {
           <div style={{ position: "sticky", top: 8, border: "1px solid #2e3540", borderRadius: 8, background: "#0f1318", padding: 10, marginBottom: 12 }}>
             <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.9 }}>
               Status: {aiRunning ? "Running" : "Idle"}{aiPid ? ` (PID ${aiPid})` : ""}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <button type="button" onClick={onStopAiRun} disabled={!aiRunning || aiStopping}>
+                {aiStopping ? "Halting..." : "Halt AI Run"}
+              </button>
             </div>
             {aiLogPath && <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 8, wordBreak: "break-all" }}>{aiLogPath}</div>}
             <div style={{ height: "58vh", overflow: "auto", border: "1px solid #1f2937", borderRadius: 6, padding: 8, background: "#020617" }}>

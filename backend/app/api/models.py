@@ -6,6 +6,7 @@ from app.core.db import get_db
 from app.schemas.model import (
     AppendRequest,
     AIStatusOut,
+    AIStopOut,
     CheckpointRequest,
     CurrentModelOut,
     AIStartOut,
@@ -25,6 +26,7 @@ from app.services.model_service import (
     read_current_model_text,
     safe_artifact_path,
     get_ai_status_for_workspace,
+    stop_ai_run_for_workspace,
     start_ai_run_for_workspace,
     workspace_detail,
 )
@@ -89,7 +91,7 @@ def delete_workspace_route(workspace_id: str, db: Session = Depends(get_db)) -> 
 @router.post("/{workspace_id}/ai/run", response_model=AIStartOut)
 async def start_ai_run_route(
     workspace_id: str,
-    concept_image: UploadFile = File(...),
+    concept_image: UploadFile | None = File(None),
     run_name: str = Form(""),
     preset_path: str = Form("presets/bird_sculpt.json"),
     max_steps: int = Form(12),
@@ -99,13 +101,17 @@ async def start_ai_run_route(
     control_plane_url: str = Form("http://localhost:8000"),
     db: Session = Depends(get_db),
 ) -> AIStartOut:
-    content = await concept_image.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="concept_image cannot be empty")
+    content = None
+    concept_filename = None
+    if concept_image is not None:
+        content = await concept_image.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="concept_image cannot be empty")
+        concept_filename = concept_image.filename or "concept.png"
     result = start_ai_run_for_workspace(
         db=db,
         workspace_id=workspace_id,
-        concept_filename=concept_image.filename or "concept.png",
+        concept_filename=concept_filename,
         concept_bytes=content,
         run_name=run_name,
         preset_source_path=preset_path,
@@ -122,4 +128,10 @@ async def start_ai_run_route(
 def ai_status_route(workspace_id: str, tail: int = 200, db: Session = Depends(get_db)) -> AIStatusOut:
     result = get_ai_status_for_workspace(db=db, workspace_id=workspace_id, tail=tail)
     return AIStatusOut(**result)
+
+
+@router.post("/{workspace_id}/ai/stop", response_model=AIStopOut)
+def stop_ai_route(workspace_id: str, db: Session = Depends(get_db)) -> AIStopOut:
+    result = stop_ai_run_for_workspace(db=db, workspace_id=workspace_id)
+    return AIStopOut(**result)
 

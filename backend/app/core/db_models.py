@@ -33,6 +33,12 @@ class ModelWorkspace(Base):
     steps: Mapped[list["Step"]] = relationship("Step", back_populates="workspace", cascade="all, delete-orphan")
     artifacts: Mapped[list["Artifact"]] = relationship("Artifact", back_populates="workspace", cascade="all, delete-orphan")
 
+    @property
+    def desired_image_rel_path(self) -> str | None:
+        from app.services.model_service import get_workspace_desired_image_rel_path
+
+        return get_workspace_desired_image_rel_path(self.id)
+
 
 class Step(Base):
     __tablename__ = "steps"

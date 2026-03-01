@@ -52,7 +52,7 @@ export const api = {
   startAiRun: (
     id: string,
     payload: {
-      conceptImage: File;
+      conceptImage?: File | null;
       runName: string;
       presetPath: string;
       maxSteps: number;
@@ -63,7 +63,9 @@ export const api = {
     }
   ) => {
     const formData = new FormData();
-    formData.append("concept_image", payload.conceptImage);
+    if (payload.conceptImage) {
+      formData.append("concept_image", payload.conceptImage);
+    }
     formData.append("run_name", payload.runName);
     formData.append("preset_path", payload.presetPath);
     formData.append("max_steps", String(payload.maxSteps));
@@ -91,6 +93,13 @@ export const api = {
       log_path: string | null;
       log_lines: string[];
     }>(`/api/workspaces/${id}/ai/status?tail=${tail}`),
+  stopAiRun: (id: string) =>
+    request<{
+      workspace_id: string;
+      stopped: boolean;
+      pid: number | null;
+      message: string;
+    }>(`/api/workspaces/${id}/ai/stop`, { method: "POST" }),
   artifactUrl: (id: string, relPath: string) =>
     `${API_BASE}/api/workspaces/${id}/artifacts/${relPath.split("/").map(encodeURIComponent).join("/")}`
 };

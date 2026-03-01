@@ -1,4 +1,5 @@
 from datetime import datetime
+import signal
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +17,29 @@ from app.core.db_models import Artifact, ArtifactType, ModelWorkspace, Step, Ste
 from app.core.ldraw import is_valid_ldraw_line
 from app.core.storage import ensure_workspace_dirs, resolve_workspace_file_safe, workspace_root
 from app.core.config import get_settings
+
+
+DESIRED_IMAGE_PREFIX = "desired_build"
+
+
+def get_workspace_desired_image_rel_path(workspace_id: str) -> str | None:
+    root = ensure_workspace_dirs(workspace_id)
+    matches = sorted((root / "meta").glob(f"{DESIRED_IMAGE_PREFIX}.*"))
+    if not matches:
+        return None
+    return matches[0].relative_to(root).as_posix()
+
+
+def _save_workspace_desired_image(workspace_id: str, concept_filename: str, concept_bytes: bytes) -> Path:
+    root = ensure_workspace_dirs(workspace_id)
+    meta_dir = root / "meta"
+    for existing in meta_dir.glob(f"{DESIRED_IMAGE_PREFIX}.*"):
+        existing.unlink(missing_ok=True)
+
+    suffix = Path(concept_filename or "concept.png").suffix or ".png"
+    desired_image_path = meta_dir / f"{DESIRED_IMAGE_PREFIX}{suffix.lower()}"
+    desired_image_path.write_bytes(concept_bytes)
+    return desired_image_path
 
 
 def create_workspace(db: Session, name: str) -> ModelWorkspace:
@@ -175,8 +199,8 @@ def delete_workspace(db: Session, workspace_id: str) -> tuple[str, bool]:
 def start_ai_run_for_workspace(
     db: Session,
     workspace_id: str,
-    concept_filename: str,
-    concept_bytes: bytes,
+    concept_filename: str | None,
+    concept_bytes: bytes | None,
     run_name: str,
     preset_source_path: str,
     max_steps: int,
@@ -189,6 +213,14 @@ def start_ai_run_for_workspace(
     settings = get_settings()
     repo_root = settings.repo_root
 
+    if concept_bytes:
+        workspace_concept_path = _save_workspace_desired_image(workspace_id, concept_filename or "concept.png", concept_bytes)
+    else:
+        existing_rel = get_workspace_desired_image_rel_path(workspace_id)
+        if not existing_rel:
+            raise HTTPException(status_code=400, detail="Upload a desired build image first")
+        workspace_concept_path = resolve_workspace_file_safe(workspace_id, existing_rel)
+
     engine_root = (repo_root / "data" / "engine").resolve()
     concepts_dir = engine_root / "concepts"
     runtime_presets_dir = engine_root / "runtime_presets"
@@ -199,9 +231,9 @@ def start_ai_run_for_workspace(
     runtime_state_dir.mkdir(parents=True, exist_ok=True)
     run_logs_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix = Path(concept_filename or "concept.png").suffix or ".png"
+    suffix = workspace_concept_path.suffix or ".png"
     concept_path = concepts_dir / f"{workspace_id}_{uuid.uuid4().hex[:8]}{suffix}"
-    concept_path.write_bytes(concept_bytes)
+    concept_path.write_bytes(workspace_concept_path.read_bytes())
 
     preset_path = (repo_root / preset_source_path).resolve()
     if not preset_path.exists():
@@ -335,4 +367,74 @@ def get_ai_status_for_workspace(db: Session, workspace_id: str, tail: int = 200)
         "preset_path": state.get("preset_path"),
         "log_path": str(log_path) if log_path else None,
         "log_lines": lines,
+    }
+
+
+def stop_ai_run_for_workspace(db: Session, workspace_id: str) -> dict:
+    get_workspace_or_404(db, workspace_id)
+    settings = get_settings()
+    state_path = settings.repo_root / "data" / "engine" / "runtime" / f"{workspace_id}.json"
+    if not state_path.exists():
+        return {
+            "workspace_id": workspace_id,
+            "stopped": False,
+            "pid": None,
+            "message": "No active AI runtime state found for this workspace",
+        }
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+
+    pid = state.get("pid") if isinstance(state.get("pid"), int) else None
+    running = _pid_is_running(pid)
+    if pid is None:
+        return {
+            "workspace_id": workspace_id,
+            "stopped": False,
+            "pid": None,
+            "message": "No PID found in runtime state",
+        }
+
+    if not running:
+        state["stopped_at"] = datetime.utcnow().isoformat()
+        state["running"] = False
+        state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        return {
+            "workspace_id": workspace_id,
+            "stopped": False,
+            "pid": pid,
+            "message": "Process is not currently running",
+        }
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        return {
+            "workspace_id": workspace_id,
+            "stopped": False,
+            "pid": pid,
+            "message": "Failed to stop process",
+        }
+
+    state["stopped_at"] = datetime.utcnow().isoformat()
+    state["running"] = False
+    state["stop_requested"] = True
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    log_path_value = state.get("log_path")
+    if isinstance(log_path_value, str):
+        log_path = Path(log_path_value)
+        try:
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{datetime.utcnow().isoformat()}] Stop requested from control plane for PID {pid}\n")
+        except Exception:
+            pass
+
+    return {
+        "workspace_id": workspace_id,
+        "stopped": True,
+        "pid": pid,
+        "message": "Stop signal sent",
     }

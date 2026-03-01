@@ -14,6 +14,7 @@ class WorkspaceOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     current_step: int
+    desired_image_rel_path: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -85,3 +86,10 @@ class AIStatusOut(BaseModel):
     preset_path: str | None
     log_path: str | None
     log_lines: list[str]
+
+
+class AIStopOut(BaseModel):
+    workspace_id: str
+    stopped: bool
+    pid: int | None
+    message: str
