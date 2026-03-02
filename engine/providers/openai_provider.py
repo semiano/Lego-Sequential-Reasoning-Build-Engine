@@ -5,6 +5,10 @@ from pathlib import Path
 import asyncio
 import random
 import uuid
+import os
+import re
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 
 import httpx
 from jsonschema import ValidationError, validate
@@ -13,6 +17,8 @@ from engine.providers.base import LLMProvider
 
 
 class OpenAIProvider(LLMProvider):
+    _semaphore: asyncio.Semaphore | None = None
+
     def __init__(
         self,
         api_key: str,
@@ -30,13 +36,65 @@ class OpenAIProvider(LLMProvider):
         self.trace_dir = trace_dir
         if self.trace_dir is not None:
             self.trace_dir.mkdir(parents=True, exist_ok=True)
+        if OpenAIProvider._semaphore is None:
+            limit = int(os.getenv("LLM_CONCURRENCY", "2"))
+            OpenAIProvider._semaphore = asyncio.Semaphore(max(1, limit))
 
-    async def _call_responses(self, system_prompt: str, user_prompt: str) -> dict:
+    @staticmethod
+    def _parse_retry_after(header_value: str | None) -> float | None:
+        if not header_value:
+            return None
+        value = header_value.strip()
+        if value.isdigit():
+            return float(value)
+        try:
+            retry_at = parsedate_to_datetime(value)
+            now = datetime.now(timezone.utc)
+            return max(0.0, (retry_at - now).total_seconds())
+        except Exception:
+            return None
+
+    @staticmethod
+    def _sanitize_schema(schema: dict) -> dict:
+        def _clean(value):
+            if isinstance(value, dict):
+                cleaned = {}
+                for key, inner in value.items():
+                    if key == "$schema":
+                        continue
+                    cleaned[key] = _clean(inner)
+
+                if cleaned.get("type") == "object" and isinstance(cleaned.get("properties"), dict):
+                    property_keys = list(cleaned["properties"].keys())
+                    existing_required = cleaned.get("required")
+                    if isinstance(existing_required, list):
+                        required_set = list(dict.fromkeys([*existing_required, *property_keys]))
+                    else:
+                        required_set = property_keys
+                    cleaned["required"] = required_set
+
+                return cleaned
+            if isinstance(value, list):
+                return [_clean(item) for item in value]
+            return value
+
+        return _clean(schema)
+
+    @staticmethod
+    def _normalize_schema_name(raw_name: str) -> str:
+        name = re.sub(r"[^A-Za-z0-9_-]", "_", raw_name).strip("_")
+        if not name:
+            name = "structured_output"
+        return name[:64]
+
+    async def _call_responses(self, system_prompt: str, user_prompt: str, schema: dict) -> dict:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+        sanitized_schema = self._sanitize_schema(schema)
+        schema_name = self._normalize_schema_name(str(sanitized_schema.get("title") or "structured_output"))
+        base_payload = {
             "model": self.model,
             "temperature": self.temperature,
             "max_output_tokens": self.max_tokens,
@@ -44,27 +102,50 @@ class OpenAIProvider(LLMProvider):
                 {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
                 {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
             ],
-            "text": {"format": {"type": "json_object"}},
+        }
+        payload = {
+            **base_payload,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "schema": sanitized_schema,
+                    "strict": True,
+                }
+            },
         }
 
         max_retries = 4
         base_delay = 1.5
-        async with httpx.AsyncClient(timeout=90) as client:
-            for attempt in range(max_retries + 1):
-                response = await client.post(f"{self.base_url}/responses", headers=headers, json=payload)
-                if response.status_code < 400:
-                    return response.json()
+        semaphore = OpenAIProvider._semaphore or asyncio.Semaphore(2)
+        async with semaphore:
+            async with httpx.AsyncClient(timeout=90) as client:
+                last_client_error = ""
+                for attempt in range(max_retries + 1):
+                    response = await client.post(f"{self.base_url}/responses", headers=headers, json=payload)
+                    if response.status_code < 400:
+                        return response.json()
 
-                retryable = response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
-                if not retryable or attempt >= max_retries:
-                    response.raise_for_status()
+                    response_body = response.text
+                    retryable = response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+                    if not retryable:
+                        if response.status_code == 400:
+                            last_client_error = response_body
+                            break
+                        response.raise_for_status()
 
-                retry_after = response.headers.get("Retry-After")
-                if retry_after and retry_after.isdigit():
-                    delay = float(retry_after)
-                else:
-                    delay = base_delay * (2**attempt) + random.uniform(0.0, 0.5)
-                await asyncio.sleep(delay)
+                    if attempt >= max_retries:
+                        response.raise_for_status()
+
+                    retry_after_seconds = self._parse_retry_after(response.headers.get("Retry-After"))
+                    if retry_after_seconds is not None:
+                        delay = retry_after_seconds
+                    else:
+                        delay = base_delay * (2**attempt) + random.uniform(0.0, 0.8)
+                    await asyncio.sleep(delay)
+
+                if last_client_error:
+                    raise ValueError(f"OpenAI responses 400 with strict schema payload: {last_client_error}")
 
         raise RuntimeError("OpenAI request failed after retries")
 
@@ -100,7 +181,7 @@ class OpenAIProvider(LLMProvider):
             print(repair_prompt, flush=True)
             print("=== LLM REQUEST END ===\n", flush=True)
 
-            response_payload = await self._call_responses(system_prompt=system_prompt, user_prompt=repair_prompt)
+            response_payload = await self._call_responses(system_prompt=system_prompt, user_prompt=repair_prompt, schema=schema)
             content_text = self._extract_text(response_payload)
             self._write_trace(response_payload, content_text)
 

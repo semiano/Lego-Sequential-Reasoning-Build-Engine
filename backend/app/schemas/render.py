@@ -18,3 +18,19 @@ class RenderRequest(BaseModel):
 class RenderResponse(BaseModel):
     step_index: int
     artifacts: list[ArtifactOut]
+
+
+class TempArtifactOut(BaseModel):
+    artifact_type: str
+    rel_path: str
+
+
+class RenderTempRequest(BaseModel):
+    extra_lines: list[str] = Field(default_factory=list)
+    views: list[str] = Field(default_factory=lambda: ["iso"])
+    turntable_frames: int = Field(default=0, ge=0, le=360)
+    resolution: RenderResolution = Field(default_factory=RenderResolution)
+
+
+class RenderTempResponse(BaseModel):
+    artifacts: list[TempArtifactOut]

@@ -87,6 +87,7 @@ docker compose down
 - `POST /api/workspaces/{id}/append`
 - `POST /api/workspaces/{id}/checkpoint`
 - `POST /api/workspaces/{id}/render`
+- `POST /api/workspaces/{id}/render_temp` (renders `current.ldr + extra_lines` without mutating timeline/current model)
 
 ### Artifacts
 - `GET /api/workspaces/{id}/artifacts/{rel_path}`
@@ -187,5 +188,22 @@ python -m engine.main export --run-id <run_id> --output .\run_report.md
 
 - All mutations go through control-plane API (`append`, `render`, `checkpoint`, `timeline`).
 - Planner and builder outputs are JSON-schema validated with retry/repair.
+- Builder receives live model context each step: bbox, anchor, grid rules, palette, and recent lines.
+- Builder output is requested via strict JSON Schema (`text.format: json_schema, strict: true`) and still validated with `jsonschema.validate`.
+- Candidate legality is validated before append (grid snap/rules, proximity/connectivity, duplicate placement guard).
+- Candidate scoring now occurs before append using `render_temp`; winner is appended only after scoring.
 - Raw LLM responses and per-step plan/render traces are written under `data/engine/runs/<run_id>/`.
 - Evaluation is local-first (CLIP if available, fallback image embedding otherwise).
+
+### LDraw Grid Rules (MVP)
+
+- LDraw units (LDU) used by validator:
+  - `x, z` must align to multiples of `20`
+  - `y` must align to multiples of `8`
+- Grid behavior is preset-controlled (`grid_rules.snap_mode`):
+  - `snap`: off-grid values are snapped to nearest legal unit
+  - `reject`: off-grid values fail validation
+- Additional pre-append legality checks:
+  - within expanded bbox OR near anchor
+  - at least one connected placement (near anchor and inside expanded bbox)
+  - duplicate placement rejection against existing type-1 placements

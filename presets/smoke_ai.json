@@ -1,6 +1,6 @@
 {
   "subject": "bird",
-  "max_steps": 1,
+  "max_steps": 6,
   "beam_width": 1,
   "candidates_per_step": 1,
   "render_views": ["iso"],
@@ -8,6 +8,19 @@
   "resolution": { "w": 384, "h": 384 },
   "score_threshold": 0.99,
   "plateau_patience": 1,
+  "max_ldraw_lines_for_llm": 200,
+  "recent_lines_limit": 20,
+  "part_palette_max_size": 20,
+  "part_palette": ["3001.dat", "3002.dat", "3022.dat", "3023.dat"],
+  "grid_rules": {
+    "xz_unit": 20,
+    "y_unit": 8,
+    "snap_mode": "snap",
+    "snap_epsilon": 0.01,
+    "bbox_margin": 80,
+    "anchor_radius": 120,
+    "require_axis_aligned_matrix": true
+  },
   "weights": {
     "concept_similarity": 0.55,
     "silhouette_similarity": 0.25,

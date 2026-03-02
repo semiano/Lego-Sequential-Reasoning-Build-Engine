@@ -5,6 +5,10 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_ENV_FILE = _REPO_ROOT / ".env"
+
+
 class Resolution(BaseModel):
     w: int = 768
     h: int = 768
@@ -22,6 +26,16 @@ class LLMKnobs(BaseModel):
     max_tokens: int = 1200
 
 
+class GridRules(BaseModel):
+    xz_unit: int = 20
+    y_unit: int = 8
+    snap_mode: str = "snap"
+    snap_epsilon: float = 0.01
+    bbox_margin: float = 80.0
+    anchor_radius: float = 120.0
+    require_axis_aligned_matrix: bool = True
+
+
 class EnginePreset(BaseModel):
     subject: str = "lego sculpture"
     max_steps: int = 12
@@ -34,10 +48,15 @@ class EnginePreset(BaseModel):
     plateau_patience: int = 3
     weights: Weights = Field(default_factory=Weights)
     llm: LLMKnobs = Field(default_factory=LLMKnobs)
+    max_ldraw_lines_for_llm: int = 250
+    recent_lines_limit: int = 20
+    part_palette: list[str] = Field(default_factory=list)
+    part_palette_max_size: int = 40
+    grid_rules: GridRules = Field(default_factory=GridRules)
 
 
 class EngineSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(_ENV_FILE), extra="ignore")
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
